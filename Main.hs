@@ -64,6 +64,13 @@ moves board (x, y) = [ [(x, y), (nx, ny)] | (dx, dy) <- direction c , let nx = x
         direction Black = [(-1, 1), (1, 1)]
         direction White = [(-1, -1) , (1, -1)]
 
+allMoves :: Board -> Color -> [Move]
+allMoves board c = concatMap (moves board) playerPos
+    where
+        playerPos = [(x, y) | y <- [0..7] , x <- [0..7] , isPlayer (board !! y !! x) c]
+        isPlayer (c, Normal) color = c == color
+        isPlayer _ _ = False
+
 -- possibleMoves :: Board -> Pos -> [(Pos, Pos)]
 -- possibleMoves board (x,y) = 
 --     [((x,y), (nx,ny)) |
@@ -132,3 +139,5 @@ testBoard = [
 
 main = do 
     printBoard testBoard
+    print (allMoves testBoard Black)
+    print (allMoves testBoard White)
