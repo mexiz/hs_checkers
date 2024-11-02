@@ -71,47 +71,50 @@ allMoves board c = concatMap (moves board) playerPos
         isPlayer (c, Normal) color = c == color
         isPlayer _ _ = False
 
--- possibleMoves :: Board -> Pos -> [(Pos, Pos)]
--- possibleMoves board (x,y) = 
---     [((x,y), (nx,ny)) |
---     (dx, dy) <- moveDirection color,
---     let nx = x + dx,
---     let ny = y + dy,
---     inBorder board (nx,ny),
---     checkLegalMove board (x,y) (nx, ny)]
---     where 
---         color = fst (board !! y !! x)
---         moveDirection Black = [(-1, 1), (1, 1)]
---         moveDirection White = [(-1, -1) , (1, -1)]  
+takes :: Board -> Pos -> [Move]
+takes board (x, y) = 
+    [[(x, y) , (tx, ty)] | (dx, dy) <- directions,
+    let ex = x + dx,
+    let ey = y + dy,
+    inBorder board (ex, ey),
+    isOpponent (enemyCell ex ey) (fst (board !! y !! x)),
+    let tx = ex + dx,
+    let ty = ey + dy,
+    inBorder board (tx,ty),
+    board !! ty !! tx == (No, Empty)]
+    where 
+        directions = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
+        enemyCell nx ny = board !! ny !! nx
+        isOpponent (c, _) playerColor = c /= No && c /= playerColor
 
--- allPossibleMoves :: Board -> Color -> [(Pos, Pos)]
--- allPossibleMoves board playerColor = 
---     concatMap (possibleMoves board) playerPositions
---     where
---         boardHeight = length board 
---         boardWidth = length (head board)
---         playerPositions = [(x, y) | y <- [0..(boardHeight - 1)], x <- [0..(boardWidth - 1)], isPlayerPiece (board !! y !! x) playerColor]
---         isPlayerPiece (c, Normal) color = c == color
---         isPlayerPiece _ _ = False
+addMove :: Pos -> Move -> Move
+addMove pos move = move ++ [pos] 
 
--- possibleTakes :: Board -> Pos -> [(Pos, Pos)]
--- possibleTakes board (x, y) = 
---     [((x,y) , (tx,ty)) |
---     (dx, dy) <- directions,
---     let nx = x + dx,
---     let ny = y + dy,
---     (inBorder board (nx,ny)), 
---     (isOpponent (enemyCell nx ny) color),
---     let tx = nx + dx,
---     let ty = ny + dy,
---     inBorder board (tx,ty),
---     board !! ty !! tx == (No, Empty)]
---     where 
---         enemyCell nx ny = board !! ny !! nx
---         color = fst (board !! y !! x)
---         directions = [(-1, -1), (1, -1), (-1, 1), (1, 1)]
---         isOpponent (c, _) playerColor = c /= No && c /= playerColor
+getLastMove :: [Move] -> [Pos]
+getLastMove moves = map last moves
 
+executeTake :: Board -> Pos -> Pos -> Board
+executeTake board (sx, sy) (ex, ey) = changeBoard sy sx (No, Empty) $ changeBoard ey ex (startColor, startPiece) $ changeBoard (sy + dy) (sx + dx) (No, Empty) board
+    where
+        (startColor, startPiece) = board !! sy !! sx
+        dx = (ex - sx) `div` 2
+        dy = (ey - sy) `div` 2
+
+
+findChains :: Board -> Pos -> Move -> [Move]
+findChains board pos currentC = 
+    case takes board pos of
+        [] -> if length currentC == 1 then [] else [currentC]
+        moves -> concatMap (\nextPos -> findChains (executeTake board pos nextPos) nextPos (addMove nextPos currentC)) (getLastMove moves) 
+
+possiblePlays :: Board -> Color -> [Move]
+possiblePlays board color = if null allTakes then allMoves board color else allTakes
+    where
+        allTakes = concatMap (\pos -> findChains board pos [pos]) playerPos
+        playerPos = [(x, y) | y <- [0..7], x <- [0..7], isPlayer (board !! y !! x) color]
+        isPlayer (c, Normal) col = c == col
+        isPlayer (c, King) col = c == col
+        isPlayer _ _ = False
 
 initBoard :: Board
 initBoard = [
@@ -136,8 +139,6 @@ testBoard = [
            [(No, Empty)    , (No, Empty), (No, Empty), (No, Empty), (No, Empty), (No, Empty), (No, Empty), (No, Empty)]
         ]
 
-
 main = do 
     printBoard testBoard
-    print (allMoves testBoard Black)
-    print (allMoves testBoard White)
+    print (possiblePlays testBoard Black)
