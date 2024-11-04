@@ -1,5 +1,3 @@
-import Debug.Trace (trace)
-
 data Color = White | Black | No deriving (Eq)
 data Piece = Normal | King | Empty deriving (Eq)
 
@@ -57,25 +55,22 @@ checkLegalMove board (startX, startY) (x,y)
         startCell = board !! startY !! startX
         checkLegalNormalPieceMove = abs (x - startX) == 1 && abs (y - startY) == 1
 
-moves :: Board -> Pos -> [Move]
-moves board (x, y) = [ [(x, y), (nx, ny)] | (dx, dy) <- direction c , let nx = x + dx , let ny = y + dy , checkLegalMove board (x, y) (nx, ny)]
+allMovesOnPos :: Board -> Pos -> [Move]
+allMovesOnPos board (x, y) = [ [(x, y), (nx, ny)] | (dx, dy) <- direction c , let nx = x + dx , let ny = y + dy , checkLegalMove board (x, y) (nx, ny)]
     where 
         c = fst (board !! y !! x)
         direction Black = [(-1, 1), (1, 1)]
         direction White = [(-1, -1) , (1, -1)]
 
-executeMove :: Board -> Pos -> Pos -> Board
-executeMove board (startX, startY) (endX, endY) = changeBoard endY endX (board !! startY !! startX) $ changeBoard startY startX (No, Empty) board
-
-allMoves :: Board -> Color -> [Move]
-allMoves board c = concatMap (moves board) playerPos
+allNormalMoves :: Board -> Color -> [Move]
+allNormalMoves board c = concatMap (allMovesOnPos board) playerPos
     where
         playerPos = [(x, y) | y <- [0..7] , x <- [0..7] , isPlayer (board !! y !! x) c]
         isPlayer (c, Normal) color = c == color
         isPlayer _ _ = False
 
-takes :: Board -> Pos -> [Move]
-takes board (x, y) = 
+allTakesOnPos :: Board -> Pos -> [Move]
+allTakesOnPos board (x, y) = 
     [[(x, y) , (tx, ty)] | (dx, dy) <- directions,
     let ex = x + dx,
     let ey = y + dy,
@@ -97,23 +92,17 @@ executeTake board (sx, sy) (ex, ey) = changeBoard sy sx (No, Empty) $ changeBoar
         dx = (ex - sx) `div` 2
         dy = (ey - sy) `div` 2
 
+executeMove :: Board -> Pos -> Pos -> Board
+executeMove board (startX, startY) (endX, endY) = changeBoard endY endX (board !! startY !! startX) $ changeBoard startY startX (No, Empty) board
+
 findChains :: Board -> Pos -> Move -> [Move]
 findChains board pos currentC = 
-    case takes board pos of
+    case allTakesOnPos board pos of
         [] -> if length currentC == 1 then [] else [currentC]
         moves -> concatMap (\nextPos -> findChains (executeTake board pos nextPos) nextPos (addMove nextPos currentC)) (getLastMove moves) 
     where 
         getLastMove moves = map last moves
         addMove pos move = move ++ [pos] 
-
-possiblePlays :: Board -> Color -> [Move]
-possiblePlays board color = if null allTakes then allMoves board color else allTakes
-    where
-        allTakes = concatMap (\pos -> findChains board pos [pos]) playerPos
-        playerPos = [(x, y) | y <- [0..7], x <- [0..7], isPlayer (board !! y !! x) color]
-        isPlayer (c, Normal) col = c == col
-        isPlayer (c, King) col = c == col
-        isPlayer _ _ = False
 
 executeMoveChain :: Board -> Move -> Board
 executeMoveChain board [pos] = board 
@@ -123,27 +112,83 @@ executeMoveChain board (start:next:rest)
   where
     isTakeMove (sx, sy) (ex, ey) = abs (ex - sx) > 1 || abs (ey - sy) > 1
 
-evalBoard :: Board -> Color -> Int
-evalBoard board c = pieceScore 
-    where 
-        pieceScore = sum [pieceValue c p | row <- board, (c, p) <- row, c /= No]
-        pieceValue _ Empty = 0
-        pieceValue color Normal
-            | color == c = 1
-            | otherwise = -1
-        pieceValue color King
-            | color == c = 3
-            | otherwise = -3
- 
+allPlays :: Board -> Color -> [Move]
+allPlays board color = if null allTakes then allNormalMoves board color else allTakes
+    where
+        allTakes = concatMap (\pos -> findChains board pos [pos]) playerPos
+        playerPos = [(x, y) | y <- [0..7], x <- [0..7], isPlayer (board !! y !! x) color]
+        isPlayer (c, Normal) col = c == col
+        isPlayer (c, King) col = c == col
+        isPlayer _ _ = False
+
 minimax :: Board -> Color -> Int -> Bool -> Int
 minimax board playerColor depth maximizingPlayer
   | depth == 0 || null legalMoves = evalBoard board playerColor
   | maximizingPlayer = maximum [minimax (executeMoveChain board move) playerColor (depth - 1) False | move <- legalMoves]
   | otherwise = minimum [minimax (executeMoveChain board move) playerColor (depth - 1) True | move <- legalMoves]
   where
-    legalMoves = possiblePlays board currentPlayer
+    legalMoves = allPlays board currentPlayer
     currentPlayer = if maximizingPlayer then playerColor else opponentColor
     opponentColor = if playerColor == White then Black else White
+
+findBestMove :: Board -> Color -> Int -> (Int,Move)
+findBestMove board playerColor depth =  (maximum moveScores)
+  where
+    moves = allPlays board playerColor
+    moveScores = [(minimax (executeMoveChain board move) playerColor (depth - 1) False, move) | move <- moves]
+
+--- DONT LIKE IT! ---
+evalBoard :: Board -> Color -> Int
+evalBoard board playerColor = pieceScore + positionScore + captureOpportunityScore - captureRiskScore - promotionRiskScore
+  where
+    pieceScore = sum [pieceValue color piece | row <- board, (color, piece) <- row]
+    
+    positionScore = sum [positionValue color (x, y) | (y, row) <- zip [0..] board, (x, (color, piece)) <- zip [0..] row, color /= No]
+    
+    captureOpportunityScore = sum [captureOpportunityValue (x, y) | (y, row) <- zip [0..] board, (x, (color, piece)) <- zip [0..] row, color == playerColor, piece /= Empty]
+
+    captureRiskScore = sum [captureRiskValue (x, y) | (y, row) <- zip [0..] board, (x, (color, piece)) <- zip [0..] row, color == playerColor, piece /= Empty]
+
+    promotionRiskScore = sum [promotionRiskValue color (x, y) | (y, row) <- zip [0..] board, (x, (color, piece)) <- zip [0..] row, color /= No, piece == Normal]
+
+    pieceValue :: Color -> Piece -> Int
+    pieceValue color Normal
+      | color == playerColor = 10
+      | otherwise = -10
+    pieceValue color King
+      | color == playerColor = 30
+      | otherwise = -30
+    pieceValue _ Empty = 0
+
+    positionValue :: Color -> Pos -> Int
+    positionValue color (x, y)
+      | color == playerColor = rowWeight y  
+      | otherwise = -rowWeight (7 - y)    
+
+    rowWeight :: Int -> Int
+    rowWeight row
+      | row == 0 || row == 7 = 5  
+      | row == 1 || row == 6 = 10
+      | row == 2 || row == 5 = 15
+      | row == 3 || row == 4 = 20
+
+    captureOpportunityValue :: Pos -> Int
+    captureOpportunityValue pos = if not (null (allTakesOnPos board pos)) then 20 else 0
+
+    captureRiskValue :: Pos -> Int
+    captureRiskValue pos = if pos `elem` concat opponentTakes then 15 else 0
+
+    opponentTakes = concatMap (allTakesOnPos board) opponentPositions
+    opponentPositions = [(x, y) | y <- [0..7], x <- [0..7], fst (board !! y !! x) == opponentColor]
+
+    opponentColor = if playerColor == White then Black else White
+
+    promotionRiskValue :: Color -> Pos -> Int
+    promotionRiskValue White (_, 1) = 10  
+    promotionRiskValue Black (_, 6) = 10  
+    promotionRiskValue _ _ = 0
+
+------------------------------------------------------------------------------------------------------------------------------------------------
 
 
 initBoard :: Board
@@ -171,6 +216,25 @@ testBoard = [
 
 main = do 
     printBoard testBoard
-    print (possiblePlays testBoard Black)
+    print (allPlays testBoard Black)
     print (evalBoard testBoard Black)
-    print (minimax testBoard Black 1 True)
+    print (findBestMove testBoard Black 1)
+    print (findBestMove testBoard Black 2)
+    print (findBestMove testBoard Black 3)
+    print (findBestMove testBoard Black 4)
+    print (findBestMove testBoard Black 5)
+    print (findBestMove testBoard Black 6)
+    print (findBestMove testBoard Black 7)
+    print (findBestMove testBoard Black 8)
+    print (findBestMove testBoard Black 9)
+    print (findBestMove testBoard Black 10)
+    print (findBestMove testBoard Black 11)
+    print (findBestMove testBoard Black 12)
+    print (findBestMove testBoard Black 13)
+    print (findBestMove testBoard Black 14)
+    print (findBestMove testBoard Black 15)
+    print (findBestMove testBoard Black 16)
+    print (findBestMove testBoard Black 17)
+    print (findBestMove testBoard Black 18)
+    print (findBestMove testBoard Black 19)
+    print (findBestMove testBoard Black 20)
