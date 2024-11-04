@@ -64,6 +64,9 @@ moves board (x, y) = [ [(x, y), (nx, ny)] | (dx, dy) <- direction c , let nx = x
         direction Black = [(-1, 1), (1, 1)]
         direction White = [(-1, -1) , (1, -1)]
 
+executeMove :: Board -> Pos -> Pos -> Board
+executeMove board (startX, startY) (endX, endY) = changeBoard endY endX (board !! startY !! startX) $ changeBoard startY startX (No, Empty) board
+
 allMoves :: Board -> Color -> [Move]
 allMoves board c = concatMap (moves board) playerPos
     where
@@ -87,12 +90,6 @@ takes board (x, y) =
         enemyCell nx ny = board !! ny !! nx
         isOpponent (c, _) playerColor = c /= No && c /= playerColor
 
-addMove :: Pos -> Move -> Move
-addMove pos move = move ++ [pos] 
-
-getLastMove :: [Move] -> [Pos]
-getLastMove moves = map last moves
-
 executeTake :: Board -> Pos -> Pos -> Board
 executeTake board (sx, sy) (ex, ey) = changeBoard sy sx (No, Empty) $ changeBoard ey ex (startColor, startPiece) $ changeBoard (sy + dy) (sx + dx) (No, Empty) board
     where
@@ -100,12 +97,14 @@ executeTake board (sx, sy) (ex, ey) = changeBoard sy sx (No, Empty) $ changeBoar
         dx = (ex - sx) `div` 2
         dy = (ey - sy) `div` 2
 
-
 findChains :: Board -> Pos -> Move -> [Move]
 findChains board pos currentC = 
     case takes board pos of
         [] -> if length currentC == 1 then [] else [currentC]
         moves -> concatMap (\nextPos -> findChains (executeTake board pos nextPos) nextPos (addMove nextPos currentC)) (getLastMove moves) 
+    where 
+        getLastMove moves = map last moves
+        addMove pos move = move ++ [pos] 
 
 possiblePlays :: Board -> Color -> [Move]
 possiblePlays board color = if null allTakes then allMoves board color else allTakes
@@ -115,6 +114,37 @@ possiblePlays board color = if null allTakes then allMoves board color else allT
         isPlayer (c, Normal) col = c == col
         isPlayer (c, King) col = c == col
         isPlayer _ _ = False
+
+executeMoveChain :: Board -> Move -> Board
+executeMoveChain board [pos] = board 
+executeMoveChain board (start:next:rest)
+  | isTakeMove start next = executeMoveChain (executeTake board start next) (next : rest)
+  | otherwise             = executeMoveChain (executeMove board start next) (next : rest)
+  where
+    isTakeMove (sx, sy) (ex, ey) = abs (ex - sx) > 1 || abs (ey - sy) > 1
+
+evalBoard :: Board -> Color -> Int
+evalBoard board c = pieceScore 
+    where 
+        pieceScore = sum [pieceValue c p | row <- board, (c, p) <- row, c /= No]
+        pieceValue _ Empty = 0
+        pieceValue color Normal
+            | color == c = 1
+            | otherwise = -1
+        pieceValue color King
+            | color == c = 3
+            | otherwise = -3
+ 
+minimax :: Board -> Color -> Int -> Bool -> Int
+minimax board playerColor depth maximizingPlayer
+  | depth == 0 || null legalMoves = evalBoard board playerColor
+  | maximizingPlayer = maximum [minimax (executeMoveChain board move) playerColor (depth - 1) False | move <- legalMoves]
+  | otherwise = minimum [minimax (executeMoveChain board move) playerColor (depth - 1) True | move <- legalMoves]
+  where
+    legalMoves = possiblePlays board currentPlayer
+    currentPlayer = if maximizingPlayer then playerColor else opponentColor
+    opponentColor = if playerColor == White then Black else White
+
 
 initBoard :: Board
 initBoard = [
@@ -142,3 +172,5 @@ testBoard = [
 main = do 
     printBoard testBoard
     print (possiblePlays testBoard Black)
+    print (evalBoard testBoard Black)
+    print (minimax testBoard Black 1 True)
